@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="7rOhfeclqJnoCFZnmGVUsh">
+<head data-page-node-id="FiPRzCtZ3mVhYy8OEWQRqd">
+  <meta charset="UTF-8" data-page-node-id="D5AxfIVZLY0qToz7coaM9b" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="SXoNrXqDVkAf3sVTb4UpkH" />
+  <title>蒸汽疏水阀在线监测系统 · 管理平台原型</title>
+  <link rel="stylesheet" href="assets/css/theme.css" data-page-node-id="uzxr6fzpYeBPI5AeTEKC1W" />
+  <!-- 本地内置依赖（Vue 3.4.27 + ECharts 5.5.0），脱离外网 CDN 也能完整运行 -->
+  <script src="assets/vendor/vue.global.prod.js"></script>
+  <script src="assets/vendor/echarts.min.js"></script>
+</head>
+<body data-page-node-id="nNvYu8Dcw7rKdqA12YVuMs">
+  <div id="splash">
+    <div class="sp-mark">阀</div>
+    <div class="sp-title">蒸汽疏水阀在线监测系统</div>
+    <div class="sp-bar"><i></i></div>
+  </div>
+  <div id="app" data-page-node-id="omiVYJJxiYL6R4yOeNeFT2">
+    <layout-root data-page-node-id="9HJSiG6XkEn4OjdxsrnEXu"></layout-root>
+  </div>
+
+  <script src="assets/js/mock-data.js"></script>
+  <script src="assets/js/store.js"></script>
+  <script src="assets/js/components/layout.js"></script>
+
+  <script src="assets/js/views/dashboard.js"></script>
+  <script src="assets/js/views/monitor-list.js"></script>
+  <script src="assets/js/views/monitor-detail.js"></script>
+  <script src="assets/js/views/device-ledger.js"></script>
+  <script src="assets/js/views/diag-results.js"></script>
+  <script src="assets/js/views/diag-trend.js"></script>
+  <script src="assets/js/views/diag-strategy.js"></script>
+  <script src="assets/js/views/diag-state.js"></script>
+  <script src="assets/js/views/alarm-realtime.js"></script>
+  <script src="assets/js/views/alarm-history.js"></script>
+  <script src="assets/js/views/alarm-rule.js"></script>
+  <script src="assets/js/views/placeholder.js"></script>
+
+  <script>
+    (function () {
+      const { createApp } = Vue;
+      const app = createApp({
+        data() {
+          return { currentView: "view-dashboard" };
+        },
+        watch: {},
+        mounted() {
+          this.$watch(() => window.Store.route.path, (p) => {
+            const map = {
+              "/dashboard": "view-dashboard",
+              "/monitor": "view-monitor-list",
+              "/monitor/detail": "view-monitor-detail",
+              "/ledger": "view-device-ledger",
+              "/diag/results": "view-diag-results",
+              "/diag/trend": "view-diag-trend",
+              "/diag/strategy": "view-diag-strategy",
+              "/diag/state": "view-diag-state",
+              "/alarm/realtime": "view-alarm-realtime",
+              "/alarm/history": "view-alarm-history",
+              "/alarm/rule": "view-alarm-rule",
+              "/todo": "view-placeholder"
+            };
+            this.currentView = map[p] || "view-dashboard";
+          }, { immediate: true });
+        }
+      });
+      app.component("layout-root", window.LayoutRoot);
+
+      /* 注册全部视图组件 */
+      const views = window.VIEWS || {};
+      Object.keys(views).forEach((k) => app.component(k, views[k]));
+
+      app.config.globalProperties.$store = window.Store;
+      app.mount("#app");
+
+      /* 首屏加载态淡出（兜底：即使异常也在 1.2s 内隐藏，避免遮挡） */
+      const hide = () => { const s = document.getElementById("splash"); if (s) s.classList.add("hide"); };
+      requestAnimationFrame(() => setTimeout(hide, 260));
+      setTimeout(hide, 1200);
+    })();
+  </script>
+</body>
+</html>
