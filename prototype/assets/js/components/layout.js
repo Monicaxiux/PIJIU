@@ -16,15 +16,16 @@
       group: "诊断分析",
       items: [
         { key: "/diag/results", icon: "◎", name: "诊断结果总览" },
-        { key: "/diag/trend", icon: "∠", name: "温差趋势对比" },
-        { key: "/diag/strategy", icon: "⚙", name: "诊断策略与基线配置" }
+        { key: "/diag/trend", icon: "∠", name: "温差趋势对比" }
       ]
     },
     {
       group: "告警管理",
       items: [
         { key: "/alarm/history", icon: "☰", name: "历史告警" },
-        { key: "/alarm/rule", icon: "✎", name: "告警规则配置" }
+        /* 「告警规则配置」模块按要求整体隐藏：菜单不展示，路由与页面文件保留（还原只需解除本行注释） */
+        // { key: "/alarm/rule", icon: "✎", name: "告警规则配置" },
+        { key: "/diag/strategy", icon: "⚙", name: "诊断策略与基线配置" }
       ]
     },
     {
@@ -45,7 +46,7 @@
     "/ledger": ["设备台账", "疏水阀档案管理"],
     "/diag/results": ["诊断分析", "诊断结果总览"],
     "/diag/trend": ["诊断分析", "温差趋势对比"],
-    "/diag/strategy": ["诊断分析", "诊断策略与基线配置"],
+    "/diag/strategy": ["告警管理", "诊断策略与基线配置"],
     "/diag/state": ["诊断分析", "状态变更记录"],
     "/alarm/realtime": ["告警管理", "实时告警"],
     "/alarm/history": ["告警管理", "历史告警"],

@@ -13,7 +13,7 @@
     name: "DeviceLedger",
     data() {
       return {
-        ws: "", typeF: "", kw: "", modal: null, tab: "base",
+        ws: "", typeF: "", kw: "", modeF: "", modal: null, tab: "base",
         learning: 0, learnResult: null,
         anno: null,            // 标注用高分辨率时序
         annotList: [],         // 已确认的标注区间
@@ -24,6 +24,8 @@
         activeHandle: "b",     // 键盘微调作用的把手
         markContinuous: true,  // 确认后保持标记模式，便于批量连续标注
         selStat: null,         // 当前选区统计
+        histOpen: false,       // 历史基线调整曲线弹窗
+        histChart: null,
         learnOnlyStable: true, // 学习时是否仅采用稳定窗口样本
         learnStat: null,       // 本次学习的样本统计明细
         wrapW: 900, wrapH: 300,
@@ -42,6 +44,7 @@
         return this.store.devices.filter((d) =>
           (!this.ws || d.workshopId === this.ws) &&
           (!this.typeF || d.type === this.typeF) &&
+          (!this.modeF || (window.MOCK.baselineMap[d.id] || {}).mode === this.modeF) &&
           (!kw || d.tagNo.toLowerCase().includes(kw) || d.name.includes(kw) || d.equip.includes(kw) || d.supplier.includes(kw))
         );
       },
@@ -58,9 +61,11 @@
       modal(v) {
         if (!v) {
           if (this.chart) { this.chart.dispose(); this.chart = null; }
+          if (this.histChart) { this.histChart.dispose(); this.histChart = null; }
           this.anno = null; this.annotList = []; this.marking = false;
           this.dragging = null; this.dragFrom = null; this.selStat = null;
           this.learning = 0; this.learnResult = null; this.learnStat = null;
+          this.histOpen = false;
           document.body.style.overflow = "";
         } else {
           /* 弹窗打开时锁定背景滚动，避免滚轮穿透 */
@@ -74,7 +79,7 @@
       this.ws = this.store.pref("ledger.ws", "");
       this.typeF = this.store.pref("ledger.type", "");
       this.kw = this.store.pref("ledger.kw", "");
-      /* 深链：二维码 / 链接直达设备档案页签（#/ledger/<设备ID或位号>/<页签>） */
+      /* 深链：链接直达设备档案页签（#/ledger/<设备ID或位号>/<页签>） */
       const p = window.Store.route.params;
       if (p && p.deviceId) {
         const d = this.store.devices.find((x) => x.id === p.deviceId || x.tagNo === p.deviceId);
@@ -82,6 +87,10 @@
           const tabs = ["base", "sensor", "baseline", "life"];
           this.modal = d;
           this.tab = tabs.indexOf(p.tab) >= 0 ? p.tab : "base";
+          /* 深链第 4 段：#/ledger/<设备>/baseline/hist 直达历史基线调整曲线 */
+          if (p.extra === "hist" && this.tab === "baseline") {
+            this.$nextTick(() => setTimeout(() => this.openHist(), 350));
+          }
         }
       }
       this._onResize = () => {
@@ -131,7 +140,8 @@
             "区域": d.workshopName, "位号": d.tagNo, "名称": d.name, "类型": d.type,
             "上游设备": d.equip, "管网位置": d.pipePos, "通径": d.caliber,
             "投运日期": d.installDate, "供应商": d.supplier, "型号": d.model,
-            "出口基准Tc(℃)": i.tcBase, "温差基准ΔT(℃)": i.dtBase,
+            "出口基线温度Tc(℃)": i.tcBase, "温差基准ΔT(℃)": i.dtBase,
+            "基线模式": i.mode === "manual" ? "手动" : "自动",
             "基准来源": i.source, "基准更新时间": i.learnedAt, "累计上升(℃)": i.cumRise,
             "相对基准诊断": r.label, "偏离(%)": r.applicable ? r.dtPct : "不适用",
             "现场状态": this.stLabel(d.status), "健康度": d.health
@@ -139,12 +149,40 @@
         }));
       },
       addDev() { window.showToast("新增设备为原型占位功能"); },
-      qrCode() { window.showToast("二维码生成：扫码可直达该设备监测详情（原型占位）"); },
       rebind() { window.showToast("重新绑定将启动「通汽自检」向导：通汽后蒸汽侧温度应明显高于冷凝水侧（原型占位）"); },
 
       /* ================= 基线学习 ================= */
       bl(d) { window.dataVer(); return window.MOCK.baselineMap[d.id]; },
       blHist(d) { return window.MOCK.baselineHistory[d.id] || []; },
+      /* ---- 基线模式（自动 / 手动）---- */
+      blMode(d) { return (window.MOCK.baselineMap[d.id] || {}).mode === "manual" ? "manual" : "auto"; },
+      toggleMode(d) {
+        const b = window.MOCK.baselineMap[d.id];
+        if (!b) return;
+        b.mode = b.mode === "manual" ? "auto" : "manual";
+        if (b.mode === "manual") {
+          b.nextAuto = "已暂停（人工维护）";
+          window.showToast("【" + d.tagNo + "】已切换为手动模式：自动重算暂停，基线仅随人工标注学习更新");
+        } else {
+          b.nextAuto = "自动排期（每 15 天）";
+          window.showToast("【" + d.tagNo + "】已切换为自动模式：每 15 天自动重算 200 点基线，人工标注仍可随时覆盖");
+        }
+        window.Store.bump();   // 通知全站重算（列表 / 驾驶舱 / 策略页）
+      },
+      /* ---- 自动模式下的「超阈值处理策略」：需人工确认(黄) / 自动生效(灰) ---- */
+      toggleConfirm(d) {
+        const b = window.MOCK.baselineMap[d.id];
+        if (!b) return;
+        b.confirmNeeded = b.confirmNeeded === false;   // true: 需人工确认；false: 无需确认，自动生效
+        const th = b.autoTh || 3;
+        if (b.confirmNeeded) {
+          window.showToast("【" + d.tagNo + "】超阈值处理已设为「需人工确认」：自动学习变化 ≥ ±" + th + "℃ 时挂起待确认，确认前沿用原基线");
+        } else {
+          window.showToast("【" + d.tagNo + "】超阈值处理已设为「自动生效」：自动学习变化 ≥ ±" + th + "℃ 时直接同步，不再挂起待确认"
+            + (b.pending ? "（当前仍有 1 条待确认记录，可继续手动确认或拒绝）" : ""));
+        }
+        window.Store.bump();
+      },
       histCls(s) {
         return s === "已生效" ? "st-tag st-normal" : s === "待确认" ? "st-tag st-leak" : "st-tag st-stop";
       },
@@ -332,6 +370,10 @@
       /* ---- 学习：按人工标注样本计算基准 ---- */
       runLearn(mode) {
         if (this.learning) return;
+        if (mode === "auto" && this.blMode(this.modal) === "manual") {
+          window.showToast("该设备为手动维护模式：自动学习已停用，请通过人工标注学习更新基线");
+          return;
+        }
         if (mode !== "auto" && !this.annotList.length) {
           window.showToast("请先点击「开始数据标记」完成至少一段区间标注，再开始学习");
           return;
@@ -383,30 +425,67 @@
           }
           const rise = r1(tcNew - b.tcBase);
           const polluted = d.status === "leak";
+          const th = b.autoTh || 3;                       // 自动同步阈值（人工可设定）
+          const absRise = Math.abs(rise);
+          const overTh = absRise >= th;                   // 变化是否达到阈值
+          const confirmNeeded = b.confirmNeeded !== false; // 超阈值处理策略：需人工确认 / 自动生效
+          const riseTxt = (rise >= 0 ? "+" : "") + rise;
           const base = "学习样本：" + (mode === "auto" ? "自动取稳定非排水窗口 200 点" : ("人工标注 " + (this.learnStat ? this.learnStat.usedSegs : segs) + " 段 · 共 " + points + " 个采样点" +
               (excluded ? "（已剔除非稳定 " + excluded + " 点）" : ""))) +
             "（Ts 均值 " + tsNew + "℃ / Tc 均值 " + tcNew + "℃ / ΔT 均值 " + dtNew + "℃）";
-          const note = (polluted && rise >= 3
-              ? "出口基准上升 " + rise + "℃ ≥ 3℃ 触发线，且该设备当前处于泄漏状态——疑似故障数据污染基线，建议先排除泄漏再重新学习"
-              : rise >= 3
-                ? "出口基准上升 " + rise + "℃ ≥ 3℃ 触发线，需人工确认后方可生效，原基线保持不变"
-                : "变化 " + rise + "℃ < 3℃ 触发线，可直接生效")
+          const note = (polluted && overTh
+              ? "出口基线温度变化 " + riseTxt + "℃ 达到自动同步阈值 ±" + th + "℃，且该设备当前处于泄漏状态——疑似故障数据污染基线，建议先排除泄漏再重新学习"
+              : overTh
+                ? (confirmNeeded
+                    ? "出口基线温度变化 " + riseTxt + "℃ ≥ 自动同步阈值 ±" + th + "℃，需人工确认后方可生效，原基线保持不变"
+                    : "出口基线温度变化 " + riseTxt + "℃ ≥ 自动同步阈值 ±" + th + "℃，该设备已设为「超阈值自动生效」——本次直接同步，不挂起待确认")
+                : "变化 " + riseTxt + "℃ < 自动同步阈值 ±" + th + "℃，可自动生效")
             + (unstable && !this.learnOnlyStable ? "；其中 " + unstable + " 段为波动/含排放脉冲区间，建议剔除后重新学习" : "");
+          /* 仅「需人工确认」策略下才挂起；「自动生效」策略直接落盘同步 */
+          const needConfirm = overTh && confirmNeeded;
           this.learnResult = {
             mode, tcOld: b.tcBase, dtOld: b.dtBase,
             tsNew, tcNew, dtNew, rise, points, segs, unstable, excluded,
-            needConfirm: rise >= 3, polluted, note, sampleNote: base
+            needConfirm, overTh, confirmNeeded, th, polluted, note, sampleNote: base
           };
+          /* 达到阈值 → 挂起待人工确认：即使关闭弹窗，面板横幅仍保留待办与确认入口 */
+          if (needConfirm) {
+            b.pending = true;
+            b.pendingLearn = { mode, tcOld: b.tcBase, dtOld: b.dtBase, tsNew, tcNew, dtNew, rise, th, points };
+          } else if (overTh) {
+            /* 「自动生效」策略：不挂起，清掉历史遗留待办，由本次学习直接生效 */
+            b.pending = false; b.pendingLearn = null;
+          }
           this.learning = 3;
           this.$forceUpdate();
         }, 1500);
       },
+      /* 待人工确认横幅上的快捷确认入口（弹窗重开后 learnResult 已清空，从挂起数据恢复） */
+      applyPending(ok) {
+        const b = this.bl(this.modal);
+        if (!b || !b.pendingLearn) return;
+        this.learnResult = Object.assign({}, b.pendingLearn, { needConfirm: true });
+        this.applyLearn(ok);
+      },
+      setAutoTh() {
+        const b = this.bl(this.modal);
+        if (!b) return;
+        let v = Number(b.autoTh);
+        if (!isFinite(v) || v < 0.5) v = 0.5;
+        if (v > 10) v = 10;
+        b.autoTh = Math.round(v * 10) / 10;
+        window.Store.bump();
+        window.showToast("自动同步阈值已更新为 ±" + b.autoTh + "℃：基线学习变化低于该值自动生效，达到即需人工确认");
+      },
       applyLearn(ok) {
-        const d = this.modal, b = this.bl(d), r = this.learnResult;
+        const d = this.modal, b = this.bl(d);
+        const r = this.learnResult || b.pendingLearn;
+        if (!r) return;
         b.tcBase = ok ? r.tcNew : b.tcBase;
         b.dtBase = ok ? r.dtNew : b.dtBase;
         b.pending = false;
-        b.sampleCnt = r.mode === "auto" ? 200 : r.points;
+        b.pendingLearn = null;
+        b.sampleCnt = r.mode === "auto" ? 200 : (r.points || 200);
         b.source = r.mode === "auto" ? "实测（200 点自动学习）" : "实测（人工标注 " + r.points + " 点）";
         b.learnedAt = this.nowStr();
         b.cumRise = Math.round((b.tcBase - (this.blHist(d)[0] ? this.blHist(d)[0].tcOld : b.tcBase)) * 10) / 10;
@@ -417,7 +496,7 @@
           dtOld: r.dtOld, dtNew: ok ? r.dtNew : r.dtOld,
           operator: "陈工", status: ok ? "已生效" : "已拒绝",
           note: ok
-            ? (r.needConfirm ? "人工确认后生效（" + r.points + " 点）" : "变化未超 3℃ 触发线，自动生效（" + r.points + " 点）")
+            ? (r.needConfirm ? "人工确认后生效（" + r.points + " 点）" : "变化未超自动同步阈值 ±" + (r.th || 3) + "℃，自动生效（" + r.points + " 点）")
             : "人工拒绝，保持原基线"
         });
         this.learnResult = null;
@@ -428,6 +507,71 @@
       },
 
       /* ================= 图表 ================= */
+      /* ---- 历史基线调整曲线弹窗 ---- */
+      openHist() {
+        this.histOpen = true;
+        this.$nextTick(() => this.renderHistChart());
+      },
+      closeHist() {
+        if (this.histChart) { this.histChart.dispose(); this.histChart = null; }
+        this.histOpen = false;
+      },
+      /* 历史调整点：按时间升序归一（种子历史旧→新、运行期 unshift 新→旧，两种写入方向统一排序），
+         最旧一条的 tcOld 作为"初始基线"起点，之后每次调整（含拒绝/待确认）为一个点 */
+      histPoints() {
+        const h = this.blHist(this.modal).slice().sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+        const b = this.bl(this.modal);
+        const pts = [];
+        if (h.length) pts.push({ time: "初始基线", tc: h[0].tcOld, dt: h[0].dtOld, status: "初始" });
+        else pts.push({ time: "初始基线", tc: b.tcBase, dt: b.dtBase, status: "初始" });
+        h.forEach((e) => pts.push({ time: e.time, tc: e.tcNew, dt: e.dtNew, tcOld: e.tcOld, status: e.status, trigger: e.trigger, note: e.note }));
+        return pts;
+      },
+      renderHistChart() {
+        const el = this.$refs.histChart;
+        if (!el || !window.echarts) return;
+        if (this.histChart) { this.histChart.dispose(); this.histChart = null; }
+        try {
+          const pts = this.histPoints();
+          const COLOR = { "初始": "#2ecc71", "已生效": "#00d4ff", "已拒绝": "#8a97a8", "待确认": "#ff9f27" };
+          const mk = (key, name, y2) => ({
+            name, type: "line", yAxisIndex: y2 ? 1 : 0,
+            data: pts.map((p) => ({ value: p[key], itemStyle: { color: COLOR[p.status] || "#00d4ff" } })),
+            symbolSize: 9,
+            lineStyle: { color: y2 ? "#2ecc71" : "#00d4ff", width: 2, type: y2 ? "dashed" : "solid" },
+            label: { show: !y2, position: "top", formatter: (p) => (p && p.value != null ? p.value : ""), color: "#9fc3e8", fontSize: 10 }
+          });
+          this.histChart = window.echarts.init(el);
+          this.histChart.setOption({
+            backgroundColor: "transparent",
+            animation: false,
+            tooltip: {
+              trigger: "item", backgroundColor: "#11244a", borderColor: "rgba(0,212,255,0.3)", textStyle: { color: "#d8ecff", fontSize: 11 },
+              formatter: (ps) => {
+                if (!ps || ps.dataIndex == null) return "";
+                const p = pts[ps.dataIndex];
+                if (!p) return "";
+                return "<b>" + p.time + "</b>（" + p.status + (p.trigger ? " · " + p.trigger : "") + "）<br>" +
+                  "出口温度基线温度 Tc_base：" + (p.tcOld != null ? p.tcOld + " → " : "") + "<b style='color:#00d4ff'>" + p.tc + "℃</b><br>" +
+                  "温差基准 ΔT_base：" + p.dt + "℃" + (p.note ? "<br><span style='color:#7fa3c9'>" + p.note + "</span>" : "");
+              }
+            },
+            legend: { top: 0, textStyle: { color: "#7fa3c9", fontSize: 10 }, itemWidth: 12, itemHeight: 6 },
+            grid: { left: 52, right: 52, top: 34, bottom: 46 },
+            xAxis: { type: "category", boundaryGap: false, data: pts.map((p) => p.time),
+              axisLine: { lineStyle: { color: "rgba(0,212,255,0.25)" } }, axisLabel: { color: "#7fa3c9", fontSize: 10, rotate: 18 } },
+            yAxis: [
+              { type: "value", name: "Tc_base ℃", nameTextStyle: { color: "#7fa3c9", fontSize: 10 },
+                axisLabel: { color: "#7fa3c9", fontSize: 10 }, splitLine: { lineStyle: { color: "rgba(0,212,255,0.08)" } } },
+              { type: "value", name: "ΔT_base ℃", nameTextStyle: { color: "#7fa3c9", fontSize: 10 },
+                axisLabel: { color: "#7fa3c9", fontSize: 10 }, splitLine: { show: false } }
+            ],
+            series: [mk("tc", "出口温度基线温度 Tc_base", false), mk("dt", "进出口温差基准 ΔT_base", true)]
+          });
+        } catch (e) {
+          console.warn("历史基线曲线渲染失败：", e);
+        }
+      },
       renderChart() {
         const el = this.$refs.chart, s = this.anno;
         if (!el || !s) return;
@@ -510,6 +654,11 @@
               <option value="">全部类型</option>
               <option>浮球式</option><option>倒立桶</option><option>热力型</option>
             </select>
+            <select class="sel" style="width:130px" v-model="modeF" title="按基线学习模式筛选">
+              <option value="">基线全部模式</option>
+              <option value="auto">自动学习</option>
+              <option value="manual">手动维护</option>
+            </select>
             <input class="inp" style="width:220px" v-model="kw" placeholder="搜索位号 / 名称 / 上游设备 / 供应商" />
             <span class="dim" style="font-size:11px">共 {{ rows.length }} 台</span>
             <span style="flex:1"></span>
@@ -522,7 +671,7 @@
           <table class="tbl sticky">
             <thead><tr>
               <th>区域</th><th>位号</th><th>名称</th><th>型号</th><th>类型</th><th>口径</th>
-              <th>安装位置</th><th>上游用汽设备</th><th>投运日期</th><th>供应商</th><th>运行状态</th><th>操作</th>
+              <th>安装位置</th><th>上游用汽设备</th><th>投运日期</th><th>供应商</th><th>运行状态</th><th>基线模式</th><th>操作</th>
             </tr></thead>
             <tbody>
               <tr v-for="d in rows" :key="d.id">
@@ -538,6 +687,14 @@
                 <td class="sub">{{ d.supplier }}</td>
                 <td><span class="st-tag" :class="stCls(d.status)"><i class="st-dot"></i>{{ stLabel(d.status) }}</span></td>
                 <td @click.stop style="white-space:nowrap">
+                  <button class="blm-switch" :class="{ manual: blMode(d) === 'manual' }"
+                          :title="blMode(d) === 'manual' ? '手动模式：自动重算已暂停，仅人工标注学习生效。点击切换为自动' : '自动模式：每 15 天自动重算 200 点基线。点击切换为手动'"
+                          @click="toggleMode(d)">
+                    <span class="blm-track"><i class="blm-knob"></i></span>
+                    <span class="blm-text">{{ blMode(d) === "manual" ? "手动" : "自动" }}</span>
+                  </button>
+                </td>
+                <td @click.stop style="white-space:nowrap">
                   <button class="btn" style="padding:3px 10px" @click="openBaseline(d)">基线标注</button>
                   <button class="btn" style="padding:3px 10px;margin-left:6px" @click="open(d)">档案</button>
                 </td>
@@ -547,7 +704,7 @@
           </div>
           <div v-if="!rows.length" class="tbl-empty">
             无匹配设备
-            <div style="margin-top:10px"><button class="btn ghost" @click="ws='';typeF='';kw=''">重置筛选</button></div>
+            <div style="margin-top:10px"><button class="btn ghost" @click="ws='';typeF='';kw='';modeF=''">重置筛选</button></div>
           </div>
         </div>
 
@@ -566,8 +723,6 @@
                 基线学习<span v-if="bl(modal) && bl(modal).pending" style="color:#ff4d5e"> ●</span>
               </span>
               <span class="chip" :class="{ on: tab === 'life' }" @click="tab = 'life'">生命周期记录</span>
-              <span style="flex:1"></span>
-              <span class="btn" style="padding:3px 10px" @click="qrCode">二维码</span>
             </div>
 
             <div v-if="tab === 'base'" style="max-height:380px;overflow-y:auto">
@@ -604,7 +759,7 @@
               <div style="display:flex;gap:10px;margin-bottom:12px">
                 <div class="kpi-card" style="flex:1;padding:12px">
                   <div class="k-num" style="color:#00d4ff;font-size:22px">{{ bl(modal).tcBase }}<span style="font-size:12px"> ℃</span></div>
-                  <div class="k-label">出口温度基准 Tc_base</div>
+                  <div class="k-label">出口温度基线温度 Tc_base</div>
                 </div>
                 <div class="kpi-card" style="flex:1;padding:12px">
                   <div class="k-num" style="color:#7fd8ff;font-size:22px">{{ bl(modal).dtBase }}<span style="font-size:12px"> ℃</span></div>
@@ -619,14 +774,55 @@
               <table class="tbl" style="margin-bottom:12px"><tbody>
                 <tr><td class="dim" style="width:110px">基线来源</td><td>{{ bl(modal).source }}</td><td class="dim" style="width:110px">采样方式</td>
                   <td>PT100 双通道 · 生产稳定 / 非排水时间 · {{ bl(modal).sampleCnt }} 个采样点均值</td></tr>
-                <tr><td class="dim">上次学习</td><td class="mono">{{ bl(modal).learnedAt }}</td><td class="dim">下次自动重算</td>
-                  <td class="mono">{{ bl(modal).nextAuto }} <span class="dim" style="font-size:11px">（每 15 天自动同步重算）</span></td></tr>
+                <tr><td class="dim">学习模式</td>
+                  <td><button class="blm-switch" :class="{ manual: blMode(modal) === 'manual' }" @click="toggleMode(modal)">
+                        <span class="blm-track"><i class="blm-knob"></i></span>
+                        <span class="blm-text">{{ blMode(modal) === "manual" ? "手动" : "自动" }}</span>
+                      </button>
+                      <span class="dim" style="font-size:11px;margin-left:8px">{{ blMode(modal) === "manual" ? "自动重算暂停，仅人工标注学习生效" : "每 15 天自动重算，人工标注可随时覆盖" }}</span></td>
+                  <td class="dim">上次学习</td><td class="mono">{{ bl(modal).learnedAt }}</td></tr>
+                <tr><td class="dim">自动同步阈值</td>
+                  <td><template v-if="blMode(modal) !== 'manual'">
+                        <input class="inp" style="width:84px" type="number" step="0.5" min="0.5" max="10" v-model.number="bl(modal).autoTh" @change="setAutoTh" />
+                        <span class="dim" style="font-size:11px;margin-left:6px">℃ —— 学习结果与原基线变化 <b style="color:#2ecc71">&lt; 阈值</b> 自动生效；<b style="color:#ff9f27">≥ 阈值</b> 需人工确认后生效</span>
+                      </template>
+                      <template v-else><span class="dim" style="font-size:11px">人工维护模式：全部学习结果均需人工确认生效，阈值不参与自动判定</span></template></td>
+                  <td class="dim">历史调整</td>
+                  <td><button class="btn" style="padding:2px 10px" @click="openHist">📈 历史基线调整曲线</button>
+                      <span class="dim" style="font-size:11px;margin-left:6px">{{ blHist(modal).length }} 次调整留痕</span></td></tr>
+                <tr><td class="dim">下次自动重算</td>
+                  <td class="mono" colspan="3">{{ bl(modal).nextAuto }}<span v-if="blMode(modal) !== 'manual'" class="dim" style="font-size:11px">（每 15 天自动同步重算）</span>
+                    <button v-if="blMode(modal) !== 'manual'" class="cfm-btn" :class="{ need: bl(modal).confirmNeeded }"
+                            :title="bl(modal).confirmNeeded ? '当前策略：超阈值需人工确认（点击改为自动生效）' : '当前策略：超阈值自动生效（点击改为需人工确认）'"
+                            @click="toggleConfirm(modal)">
+                      {{ bl(modal).confirmNeeded ? "✋ 超阈值需人工确认" : "⚡ 超阈值自动生效" }}
+                    </button>
+                  </td></tr>
               </tbody></table>
+
+              <!-- 待人工确认横幅 -->
+              <div v-if="bl(modal).pending" class="panel" style="padding:10px 14px;margin-bottom:12px;border-color:rgba(255,159,39,0.55);background:rgba(255,159,39,0.07)">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span style="color:#ff9f27;font-weight:bold">⏸ 基线调整待人工确认</span>
+                  <span class="sub" style="font-size:11px" v-if="bl(modal).pendingLearn">
+                    最近一次学习：出口基线温度 {{ bl(modal).pendingLearn.tcOld }} → <b style="color:#00d4ff">{{ bl(modal).pendingLearn.tcNew }}℃</b> /
+                    温差基准 {{ bl(modal).pendingLearn.dtOld }} → {{ bl(modal).pendingLearn.dtNew }}℃，
+                    变化 <b>{{ bl(modal).pendingLearn.rise >= 0 ? "+" : "" }}{{ bl(modal).pendingLearn.rise }}℃</b> 已达自动同步阈值
+                    ±{{ bl(modal).pendingLearn.th }}℃ —— 确认前<b style="color:#ff9f27">仍沿用原基线</b>参与诊断。
+                  </span>
+                  <span class="sub" style="font-size:11px" v-else>该设备存在待确认的基线变更（历史遗留），可重新执行一次学习后进行确认。</span>
+                  <span style="flex:1"></span>
+                  <template v-if="bl(modal).pendingLearn">
+                    <button class="btn ghost" style="padding:3px 12px" @click="applyPending(false)">✕ 拒绝</button>
+                    <button class="btn primary" style="padding:3px 12px" @click="applyPending(true)">✓ 确认生效</button>
+                  </template>
+                </div>
+              </div>
 
               <!-- 趋势预警 -->
               <div v-if="bl(modal).cumRise >= 5" class="panel" style="padding:10px 14px;margin-bottom:12px;border-color:rgba(255,77,94,0.5);background:rgba(255,77,94,0.06)">
                 <span style="color:#ff4d5e;font-weight:bold">⚠ 基线趋势预警</span>
-                <span class="sub" style="font-size:11px;margin-left:8px">出口基准累计上升 {{ bl(modal).cumRise }}℃（连续向上），疑似泄漏工况污染或工况漂移——建议先人工核查设备状态，再决定是否接受新基线。</span>
+                <span class="sub" style="font-size:11px;margin-left:8px">出口基线温度累计上升 {{ bl(modal).cumRise }}℃（连续向上），疑似泄漏工况污染或工况漂移——建议先人工核查设备状态，再决定是否接受新基线。</span>
               </div>
 
               <!-- ===== 人工标注学习（曲线框选 → 批量标注 → 按标注样本学习基准） ===== -->
@@ -644,7 +840,7 @@
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
                   <span style="font-weight:bold">人工标注基线学习</span>
-                  <span class="dim" style="font-size:11px">在曲线上框选「生产稳定 · 非排水时间」区间并批量标注 → 由标注样本计算出口温度基准与温差基准</span>
+                  <span class="dim" style="font-size:11px">在曲线上框选「生产稳定 · 非排水时间」区间并批量标注 → 由标注样本计算出口温度基线温度与温差基准</span>
                   <span style="flex:1"></span>
                   <button class="btn" style="padding:3px 10px" @click="refreshData">刷新数据</button>
                   <button class="btn primary" style="padding:4px 14px" v-if="!marking" @click="startMark">▶ 开始数据标记</button>
@@ -761,7 +957,7 @@
                   <table class="tbl" style="margin:8px 0">
                     <thead><tr><th>指标</th><th>原基线</th><th>学习值</th><th>变化</th></tr></thead>
                     <tbody>
-                      <tr><td>出口温度基准 Tc_base</td><td class="mono">{{ learnResult.tcOld }} ℃</td>
+                      <tr><td>出口温度基线温度 Tc_base</td><td class="mono">{{ learnResult.tcOld }} ℃</td>
                         <td class="mono" style="color:#00d4ff">{{ learnResult.tcNew }} ℃</td>
                         <td class="mono" :style="{ color: learnResult.rise >= 3 ? '#ff4d5e' : '#2ecc71' }">{{ learnResult.rise > 0 ? '+' : '' }}{{ learnResult.rise }} ℃</td></tr>
                       <tr><td>进出口温差基准 ΔT_base</td><td class="mono">{{ learnResult.dtOld }} ℃</td>
@@ -769,7 +965,7 @@
                         <td class="mono dim">{{ learnResult.dtNew - learnResult.dtOld > 0 ? '+' : '' }}{{ Math.round((learnResult.dtNew - learnResult.dtOld) * 10) / 10 }} ℃</td></tr>
                       <tr><td>进口温度均值 Ts（参考，不参与判定）</td><td class="mono dim">—</td>
                         <td class="mono">{{ learnResult.tsNew }} ℃</td>
-                        <td class="mono dim">≈ 出口基准 + 温差基准</td></tr>
+                        <td class="mono dim">≈ 出口温度基线温度 + 温差基准</td></tr>
                     </tbody>
                   </table>
                   <div class="dim" style="margin-bottom:6px">{{ learnResult.sampleNote }}</div>
@@ -801,16 +997,16 @@
 
                 <!-- 备用：自动学习 -->
                 <div class="mark-tip" style="margin-top:10px">
-                  <span>备用方式：不标注，按「生产稳定 / 非排水窗口」自动取 200 点均值（冷启动或快速复算）</span>
+                  <span>备用方式：不标注，按「生产稳定 / 非排水窗口」自动取 200 点均值（冷启动或快速复算）<template v-if="blMode(modal) === 'manual'">——<b style="color:#ff9f27">当前为手动模式，自动学习已停用</b>，可点击上方开关切回自动</template></span>
                   <span style="flex:1"></span>
-                  <button class="btn ghost" style="padding:2px 10px" :disabled="!!learning" @click="runLearn('auto')">自动学习 200 点</button>
+                  <button class="btn ghost" style="padding:2px 10px" :disabled="!!learning || blMode(modal) === 'manual'" @click="runLearn('auto')">自动学习 200 点</button>
                 </div>
               </div>
 
               <!-- 变更趋势 -->
               <div style="font-weight:bold;margin-bottom:6px">基线变更趋势（每次更改留痕）</div>
               <table class="tbl">
-                <thead><tr><th>时间</th><th>触发方式</th><th>出口基准</th><th>温差基准</th><th>操作人</th><th>状态</th><th>说明</th></tr></thead>
+                <thead><tr><th>时间</th><th>触发方式</th><th>出口基线温度</th><th>温差基准</th><th>操作人</th><th>状态</th><th>说明</th></tr></thead>
                 <tbody>
                   <tr v-for="h in blHist(modal)" :key="h.time">
                     <td class="mono dim" style="font-size:11px">{{ h.time }}</td>
@@ -839,6 +1035,28 @@
 
             <div class="m-foot">
               <button class="btn ghost" @click="modal = null">关闭</button>
+            </div>
+          </div>
+
+          <!-- ===== 历史基线调整曲线弹窗 ===== -->
+          <div v-if="histOpen" class="modal-mask" style="z-index:130" @click.self="closeHist">
+            <div class="modal" style="width:820px;max-width:94vw">
+              <h3 style="display:flex;align-items:center;gap:10px">
+                <span class="mono" style="color:#00d4ff">{{ modal.tagNo }}</span> 历史基线调整曲线
+                <span class="dim" style="font-size:11px;font-weight:normal;margin-left:6px">每次调整（自动 / 人工标注 / 拒绝 / 待确认）逐点留痕</span>
+                <span style="margin-left:auto;display:inline-flex;gap:12px;font-size:11px;font-weight:normal">
+                  <span style="color:#2ecc71">● 初始</span><span style="color:#00d4ff">● 已生效</span>
+                  <span style="color:#ff9f27">● 待确认</span><span style="color:#8a97a8">● 已拒绝</span>
+                </span>
+              </h3>
+              <div ref="histChart" style="width:100%;height:380px"></div>
+              <div class="dim" style="font-size:11px;padding:0 16px 6px;line-height:1.8">
+                读图：实线为<b style="color:#00d4ff">出口温度基线温度 Tc_base</b>（点上标注数值），虚线为<b style="color:#2ecc71">进出口温差基准 ΔT_base</b>（右轴）；
+                橙色点 = 达到自动同步阈值、待人工确认（确认前未生效），灰色点 = 已拒绝（基线未变）。
+              </div>
+              <div class="m-foot">
+                <button class="btn ghost" @click="closeHist">关闭</button>
+              </div>
             </div>
           </div>
         </div>

@@ -69,9 +69,52 @@
       },
       stCls(s) { return window.MOCK.STATES[s].cls; },
       stLabel(s) { return window.MOCK.STATES[s].label; },
+      /* 状态筛选 chip 与下方表格「现场状态」列同色：字体/边框/选中背景均取 STATES.color */
+      stChipStyle(k) {
+        const c = window.MOCK.STATES[k].color;
+        const on = this.statusOn.includes(k);
+        return {
+          color: c,
+          borderColor: on ? c : c + "55",
+          background: on ? c + "1f" : "transparent"
+        };
+      },
       hColor(h) { return h >= 85 ? "#2ecc71" : h >= 60 ? "#ff9f27" : "#ff4d5e"; },
       rd(d) { window.dataVer(); return window.MOCK.baseline.diag(d); },
       bi(d) { window.dataVer(); return window.MOCK.baseline.info(d); },
+      /* 基线模式列：auto（每 15 天自动重算 + 人工标注）/ manual（仅人工标注） */
+      modeLabel(d) { return this.bi(d).mode === "manual" ? "手动" : "自动"; },
+      modeTitle(d) {
+        const i = this.bi(d);
+        return i.mode === "manual"
+          ? "手动模式：自动重算暂停，仅人工标注学习生效，下次自动重算 " + i.nextAuto
+          : "自动模式：每 15 天自动重算 + 人工标注均可；自动同步阈值 ±" + i.autoTh + "℃（低于阈值自动同步，超阈值按右侧策略处理）";
+      },
+      /* 人工确认列：该设备基线学习结果是否需要人工确认才能生效 */
+      cnfKind(d) {
+        const i = this.bi(d);
+        if (i.pending) return "pend";
+        if (i.mode === "manual") return "need";       // 手动模式：学习结果一律需人工确认
+        return i.confirmNeeded ? "need" : "free";     // 自动模式：按「超阈值处理」策略
+      },
+      cnfLabel(d) {
+        const i = this.bi(d), k = this.cnfKind(d);
+        if (k === "pend") return "待确认";
+        if (k === "free") return "免确认";
+        return "需确认";
+      },
+      cnfIcon(d) {
+        const k = this.cnfKind(d);
+        return k === "pend" ? "⏸" : k === "free" ? "⚡" : "✋";
+      },
+      cnfTitle(d) {
+        const i = this.bi(d), k = this.cnfKind(d);
+        if (k === "pend") return "已有自动学习结果挂起（待人工确认），确认前沿用原基线；点击该行「基线」按钮前往处理";
+        if (i.mode === "manual") return "手动模式：仅人工标注学习生效，其结果一律需人工确认";
+        return i.confirmNeeded
+          ? "自动模式 · 超阈值需人工确认：学习变化 ≥ ±" + i.autoTh + "℃ 时挂起待确认"
+          : "自动模式 · 超阈值自动生效：学习变化 ≥ ±" + i.autoTh + "℃ 时直接同步，无需人工确认";
+      },
       /* 温差偏离基准的着色：越限即按档位着色 */
       devColor(d) {
         const r = this.rd(d);
@@ -101,6 +144,11 @@
             case "dtPct": return this.rd(d).applicable ? this.rd(d).dtPct : 9999;
             case "rank": return this.gradeRank[this.rd(d).key] === undefined ? 99 : this.gradeRank[this.rd(d).key];
             case "status": return this.gradeRank[d.status] === undefined ? d.status : this.gradeRank[this.rd(d).key];
+            case "mode": return this.bi(d).mode === "manual" ? 1 : 0;   // 升序：自动在前
+            case "cnf": {                                                // 升序：待确认 → 需确认 → 免确认
+              const k = this.cnfKind(d);
+              return k === "pend" ? 0 : k === "need" ? 1 : 2;
+            }
             case "health": return d.health;
             case "lastUpdate": return d.lastUpdate;
             default: return d.health;
@@ -128,7 +176,12 @@
             "区域": d.workshopName, "位号": d.tagNo, "名称": d.name, "类型": d.type,
             "Ts窗口均值(℃)": r.win.tsMean, "Tc窗口均值(℃)": r.win.tcMean,
             "ΔT窗口均值(℃)": r.win.dtMean, "ΔT基准(℃)": i.dtBase, "偏离(%)": r.applicable ? r.dtPct : "不适用",
-            "相对基准诊断": r.label, "现场状态": this.stLabel(d.status), "健康度": d.health, "最近更新": d.lastUpdate
+            "相对基准诊断": r.label,
+            "基线模式": i.mode === "manual" ? "手动" : "自动",
+            "自动同步阈值(℃)": i.mode === "manual" ? "—" : "±" + i.autoTh,
+            "超阈值是否需人工确认": this.cnfKind(d) === "free" ? "否（自动生效）" : "是",
+            "基线待办": i.pending ? "待人工确认" : i.cumRise >= i.warnRise ? "趋势预警" : "—",
+            "现场状态": this.stLabel(d.status), "健康度": d.health, "最近更新": d.lastUpdate
           };
         }));
       }
@@ -145,7 +198,7 @@
             </select>
             <input class="inp" style="width:200px" v-model="kw" placeholder="搜索位号 / 名称 / 上游设备" />
             <span class="dim" style="font-size:11px">状态筛选：</span>
-            <span class="chip" :class="{ on: statusOn.includes(k) }" v-for="(v, k) in statusCounts" :key="k" @click="toggleSt(k)">
+            <span class="chip" :class="{ on: statusOn.includes(k) }" :style="stChipStyle(k)" v-for="(v, k) in statusCounts" :key="k" @click="toggleSt(k)">
               {{ stLabel(k) }} <span class="chip-n">{{ v }}</span>
             </span>
             <span style="flex:1"></span>
@@ -174,6 +227,8 @@
                 <th class="th-sort" @click="sortBy('tc')" title="30 分钟稳定窗口冷凝水侧均值">冷凝水侧 Tc(℃){{ sortMark('tc') }}</th>
                 <th class="th-sort" @click="sortBy('dt')" title="30 分钟稳定窗口进出口温差均值 / 该设备人工学习温差基准">温差 ΔT / 基准(℃){{ sortMark('dt') }}</th>
                 <th class="th-sort" @click="sortBy('rank')">相对基准诊断{{ sortMark('rank') }}</th>
+                <th class="th-sort" @click="sortBy('mode')" title="基线学习模式：自动 = 每 15 天自动重算 + 人工标注均可；手动 = 仅人工标注学习生效">基线模式{{ sortMark('mode') }}</th>
+                <th class="th-sort" @click="sortBy('cnf')" title="该设备基线学习结果是否需要人工确认才能生效（黄 = 需确认，灰 = 免确认）">人工确认{{ sortMark('cnf') }}</th>
                 <th class="th-sort" @click="sortBy('status')">现场状态{{ sortMark('status') }}</th>
                 <th class="th-sort" @click="sortBy('health')">健康度{{ sortMark('health') }}</th>
                 <th class="th-sort" @click="sortBy('lastUpdate')">最近更新{{ sortMark('lastUpdate') }}</th>
@@ -203,8 +258,14 @@
                   <span v-if="rd(d).isFloat && rd(d).consec" class="mono" style="font-size:10px;margin-left:4px"
                         :style="{ color: rd(d).key === 'leakSevere' ? '#ff4d5e' : rd(d).key === 'leakMild' ? '#ff9f27' : '#f0997b' }"
                         :title="'浮球式：ΔT/ΔT基准 连续命中评估次数（每 20min 一次）'">连续 {{ rd(d).consec }} 次</span>
-                  <span v-if="bi(d).pending" class="st-tag st-block" style="padding:0 6px;font-size:10px;margin-left:4px" title="基线已重算，上升 ≥3℃ 待人工确认">基线待确认</span>
-                  <span v-else-if="bi(d).cumRise >= bi(d).warnRise" class="st-tag st-leak" style="padding:0 6px;font-size:10px;margin-left:4px" title="基线累计上升 ≥5℃，疑似故障数据污染基线">趋势预警</span>
+                  <span v-if="bi(d).cumRise >= bi(d).warnRise" class="st-tag st-leak" style="padding:0 6px;font-size:10px;margin-left:4px" title="基线累计上升 ≥5℃，疑似故障数据污染基线">趋势预警</span>
+                </td>
+                <td style="white-space:nowrap">
+                  <span class="bm-tag" :class="bi(d).mode === 'manual' ? 'manual' : 'auto'" :title="modeTitle(d)">{{ modeLabel(d) }}</span>
+                  <span v-if="bi(d).mode !== 'manual'" class="bm-th" :title="'自动同步阈值 ±' + bi(d).autoTh + '℃，变化低于阈值自动同步，达到阈值按「人工确认」列策略处理'">±{{ bi(d).autoTh }}℃</span>
+                </td>
+                <td style="white-space:nowrap">
+                  <span class="cnf-tag" :class="cnfKind(d)" :title="cnfTitle(d)">{{ cnfIcon(d) }} {{ cnfLabel(d) }}</span>
                 </td>
                 <td><span class="st-tag" :class="stCls(d.status)"><i class="st-dot"></i>{{ stLabel(d.status) }}</span></td>
                 <td>

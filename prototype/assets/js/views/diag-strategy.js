@@ -317,11 +317,11 @@
         <!-- 基线台账 · 待人工确认 -->
         <div class="panel glow">
           <div class="panel-title">基线台账 · 待人工确认与趋势预警
-            <span class="pt-extra dim" style="font-size:11px">点击「去处理」直达该设备基线标注学习页</span>
+            <span class="pt-extra dim" style="font-size:11px">全厂学习模式：自动 {{ bl.autoCnt }} 台 / 手动 {{ bl.manualCnt }} 台（在设备台账清单中逐台切换）· 点击「去处理」直达该设备基线标注学习页</span>
           </div>
           <table class="tbl" style="margin-bottom:12px">
             <thead><tr>
-              <th>位号</th><th>阀型</th><th>区域</th><th>基线来源</th><th>累计上升</th><th>状态</th><th>处理建议</th><th>操作</th>
+              <th>位号</th><th>阀型</th><th>区域</th><th>基线来源</th><th>学习模式</th><th>累计上升</th><th>状态</th><th>处理建议</th><th>操作</th>
             </tr></thead>
             <tbody>
               <tr v-for="x in bl.pendingList" :key="x.d.id" style="cursor:default">
@@ -329,6 +329,10 @@
                 <td class="sub">{{ x.d.type }}</td>
                 <td class="sub">{{ x.d.workshopName }}</td>
                 <td class="dim" style="font-size:11px">{{ x.i.source }} · {{ x.i.learnedAt }}</td>
+                <td><span class="st-tag" style="padding:1px 8px" :style="x.i.mode === 'manual'
+                     ? 'color:#ff9f27;border-color:rgba(255,159,39,0.4);background:rgba(255,159,39,0.08)'
+                     : 'color:#2ecc71;border-color:rgba(46,204,113,0.4);background:rgba(46,204,113,0.08)'">
+                  {{ x.i.mode === "manual" ? "手动维护" : "自动学习" }}</span></td>
                 <td class="mono" :style="{ color: x.i.cumRise >= 5 ? '#ff4d5e' : '#ff9f27' }">+{{ x.i.cumRise }} ℃</td>
                 <td><span class="st-tag" :class="x.i.cumRise >= 5 ? 'st-leak' : 'st-block'" style="padding:1px 8px">
                   <i class="st-dot"></i>{{ x.i.cumRise >= 5 ? "趋势预警" : "待确认" }}</span></td>
@@ -338,7 +342,7 @@
                 <td><button class="btn" style="padding:3px 10px" @click="gotBaseline(x.d.id)">去处理</button></td>
               </tr>
               <tr v-if="!bl.pendingList.length">
-                <td colspan="8" class="dim" style="text-align:center;padding:20px">当前无待确认基线（15 天自动重算周期内）</td>
+                <td colspan="9" class="dim" style="text-align:center;padding:20px">当前无待确认基线（15 天自动重算周期内）</td>
               </tr>
             </tbody>
           </table>

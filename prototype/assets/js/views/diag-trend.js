@@ -5,7 +5,14 @@
   const { defineComponent } = Vue;
   window.VIEWS = window.VIEWS || {};
 
-  const PALETTE = ["#00d4ff", "#ff4d5e", "#ff9f27", "#2ecc71", "#a08cf0", "#1d9e75", "#f0997b", "#85b7eb"];
+  /* 曲线配色：5 类曲线各占一色（同台设备 5 色互异）；多设备叠加时按设备分组换色相，
+     组内顺序固定对应：Ts / Tc / ΔT / 出口温度基线 / 温差基准；线型仍保留区分（实/实/虚/点/点） */
+  const COLOR_GROUPS = [
+    ["#ff5d5d", "#ff9f27", "#ffd23f", "#00d4ff", "#2ecc71"],
+    ["#e06cff", "#ff7ad9", "#9fd4ff", "#7a5cff", "#4de3c0"],
+    ["#ff8f5d", "#f5e960", "#8aff80", "#5db8ff", "#c9f76f"],
+    ["#ff4da6", "#ffb84d", "#66e0ff", "#a0ff5d", "#8f9bff"]
+  ];
 
   window.VIEWS["view-diag-trend"] = defineComponent({
     name: "DiagTrend",
@@ -42,40 +49,49 @@
       },
       render() {
         const n = this.rangePoints;
-        const series = this.picked.map((id, i) => {
+        /* 每台设备 5 条线、5 种颜色（组内固定语义：Ts 红 / Tc 橙 / ΔT 黄 / 出口基线 青 / 温差基准 绿，多设备时换组色相），
+           线型同时保留：Ts/Tc 实线（左轴）、ΔT 虚线（右轴）、两条基线点线 */
+        const mk = (name, data, color, yIdx, type, width, opacity) => ({
+          name, type: "line", showSymbol: false, smooth: true,
+          data, yAxisIndex: yIdx,
+          lineStyle: { color, width, type, opacity },
+          itemStyle: { color },
+          emphasis: { focus: "series" }
+        });
+        const series = [];
+        this.picked.forEach((id, i) => {
           const d = this.store.devices.find((x) => x.id === id);
           const s = window.MOCK.seriesMap[id];
-          const color = PALETTE[i % PALETTE.length];
-          const base = window.MOCK.baseline.info(d).dtBase;
-          return {
-            name: d.tagNo + "（" + window.MOCK.STATES[d.status].label + "）",
-            type: "line", showSymbol: false, smooth: true,
-            data: s.dt.slice(-n),
-            lineStyle: { color, width: 1.5 },
-            itemStyle: { color },
-            markLine: {
-              silent: true, symbol: "none",
-              data: [{
-                yAxis: base, lineStyle: { color, type: "dashed", width: 1, opacity: 0.5 },
-                label: { show: true, position: "insideEndTop", formatter: d.tagNo.slice(-3) + " 基准 " + base, color, fontSize: 9 }
-              }]
-            }
-          };
+          if (!s) return;
+          const info = window.MOCK.baseline.info(d);
+          const g = COLOR_GROUPS[i % COLOR_GROUPS.length];
+          const tag = d.tagNo + "（" + window.MOCK.STATES[d.status].label + "）";
+          series.push(
+            mk(tag + " 蒸汽侧Ts", s.ts.slice(-n), g[0], 0, "solid", 1.6, 0.95),
+            mk(tag + " 出口Tc", s.tc.slice(-n), g[1], 0, "solid", 1.6, 0.95),
+            mk(tag + " 温差ΔT", s.dt.slice(-n), g[2], 1, "dashed", 1.4, 0.9),
+            mk(tag + " 出口温度基线", new Array(n).fill(info.tcBase), g[3], 0, [2, 4], 1.2, 0.75),
+            mk(tag + " 温差基准", new Array(n).fill(info.dtBase), g[4], 1, [2, 4], 1.2, 0.75)
+          );
         });
-        const times = window.MOCK.seriesMap[this.picked[0]] ? window.MOCK.seriesMap[this.picked[0]].times.slice(-n) : [];
+        const first = window.MOCK.seriesMap[this.picked[0]];
+        const times = first ? first.times.slice(-n) : [];
         const axis = window.chartUtil.baseAxis();
         const opt = {
           backgroundColor: "transparent",
           tooltip: { trigger: "axis", backgroundColor: "#11244a", borderColor: "rgba(0,212,255,0.3)", textStyle: { color: "#d8ecff", fontSize: 11 } },
-          legend: { top: 0, textStyle: { color: "#7fa3c9", fontSize: 10 }, itemWidth: 12, itemHeight: 6 },
-          grid: { left: 42, right: 16, top: 40, bottom: 26 },
+          legend: { top: 0, type: "scroll", textStyle: { color: "#7fa3c9", fontSize: 10 }, itemWidth: 14, itemHeight: 6, pageIconColor: "#00d4ff", pageTextStyle: { color: "#7fa3c9" } },
+          grid: { left: 46, right: 50, top: 56, bottom: 26 },
           xAxis: Object.assign({ type: "category", data: times, boundaryGap: false,
             axisLabel: { color: "#4d6b8f", fontSize: 10, interval: Math.floor(n / 8) } }, {}),
-          yAxis: Object.assign({ type: "value", name: "ΔT ℃", nameTextStyle: { color: "#4d6b8f" } }, axis),
+          yAxis: [
+            Object.assign({ type: "value", name: "温度 ℃（Ts / Tc / 出口基线）", nameTextStyle: { color: "#4d6b8f", fontSize: 10 } }, axis),
+            Object.assign({ type: "value", name: "温差 ℃（ΔT / 基准）", nameTextStyle: { color: "#4d6b8f", fontSize: 10 }, splitLine: { show: false } }, axis)
+          ],
           series
         };
         if (!this.chart) this.chart = window.chartUtil.make(this.$refs.chart, opt);
-        else this.chart.setOption(opt);
+        else this.chart.setOption(opt, true);
       }
     },
     template: `
@@ -102,7 +118,7 @@
         </div>
         <div>
           <div class="panel glow">
-            <div class="panel-title">ΔT 温差叠加对比
+            <div class="panel-title">温度 / 温差叠加对比（每台设备 5 条线）
               <span class="pt-extra">
                 <button class="btn ghost" v-for="r in ['2h','8h','24h']" :key="r"
                         :class="{ primary: range === r }" style="padding:3px 12px" @click="range = r">{{ r }}</button>
@@ -110,8 +126,9 @@
             </div>
             <div ref="chart" style="width:100%;height:480px"></div>
             <div class="dim" style="font-size:11px;line-height:1.8">
-              同色虚线 = 该设备经人工标注学习得到的温差基准（左列表显示其相对基准偏离百分比）。
-              泄漏设备 ΔT 长期低于基准的 65%；堵塞设备 ΔT 高于基准 25%（轻度）/ 35%（重度）以上；正常设备应在基准带内随排放周期小幅波动。
+              每台选中设备绘制 5 条线、5 种颜色：<b style="color:#ff5d5d">红</b> = 蒸汽侧温度 Ts（左轴）、<b style="color:#ff9f27">橙</b> = 出口温度 Tc（左轴）、<b style="color:#ffd23f">黄</b> = 进出口温差 ΔT（右轴虚线）、<b style="color:#00d4ff">青</b> = 出口温度基线 Tc_base（左轴点线）、<b style="color:#2ecc71">绿</b> = 进出口温差基准 ΔT_base（右轴点线），基线由人工标注学习得到。
+              多设备叠加时按设备分组换色相（第 2 台紫系、第 3 台橙绿系…），线型不变。
+              泄漏设备 ΔT 长期低于基准的 65%；堵塞设备 ΔT 高于基准 25%（轻度）/ 35%（重度）以上；正常设备应在基准带内随排放周期小幅波动。点击图例可隐藏/显示对应曲线，建议同时对比 1~3 台以免曲线过密。
             </div>
           </div>
         </div>

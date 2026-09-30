@@ -424,6 +424,12 @@
       dtBase, tcBase,
       source: templ ? "模板（冷启动）" : d.status === "normal" ? "实测（200 点学习）" : "实测（上次正常工况 · 200 点）",
       sampleCnt: 200,
+      /* 基线学习模式：auto = 每 15 天自动重算 + 人工标注均可；manual = 仅人工标注学习生效，自动重算暂停 */
+      mode: i % 9 === 4 ? "manual" : "auto",
+      /* 自动同步阈值（℃）：学习结果与原基线变化 < 阈值 → 自动生效；≥ 阈值 → 需人工确认 */
+      autoTh: [2, 3, 5][i % 3],
+      /* 超阈值处理策略（自动模式）：true = 需人工确认后方可生效（默认）；false = 无需确认，直接自动生效 */
+      confirmNeeded: i % 7 !== 2,
       learnedAt: "2026-0" + ((i % 8) + 1) + "-1" + (i % 9) + " 10:" + String(10 + (i % 40)).padStart(2, "0"),
       nextAuto: "2026-09-" + String(16 + (i % 12)).padStart(2, "0"),
       cumRise: 0
@@ -446,7 +452,7 @@
       ]},
       { i: 24, rows: [
         { time: "2026-08-20 10:12", trigger: "15天自动重算", tcOld: 115.8, tcNew: 117.0, dtOld: 57.2, dtNew: 56.6, operator: "系统自动", status: "已生效", note: "上升 1.2℃ < 3℃，自动生效" },
-        { time: "2026-09-04 10:15", trigger: "15天自动重算", tcOld: 117.0, tcNew: 120.4, dtOld: 56.6, dtNew: 54.3, operator: "系统自动", status: "待确认", note: "上升 3.4℃ ≥ 3℃，待人工确认（累计 4.6℃ 未达趋势预警线）" }
+        { time: "2026-09-04 10:15", trigger: "15天自动重算", tcOld: 117.0, tcNew: 120.4, dtOld: 56.6, dtNew: 54.3, operator: "系统自动", status: "待确认", note: "上升 3.4℃ ≥ 自动同步阈值 ±2℃，待人工确认（累计 4.6℃ 未达趋势预警线）" }
       ]},
       { i: 16, rows: [
         { time: "2026-08-15 15:40", trigger: "手动学习", tcOld: 120, tcNew: 122.1, dtOld: 50, dtNew: 49.2, operator: "王工", status: "已生效", note: "检修后基线重建" },
@@ -461,7 +467,17 @@
       b.tcBase = base.tcNew; b.dtBase = base.dtNew;
       /* 累计上升幅度 = 最新一次计算值（含待确认）相对最早记录基线的整体抬升 */
       b.cumRise = Math.round((rows[rows.length - 1].tcNew - rows[0].tcOld) * 10) / 10;
-      if (rows.some((r) => r.status === "待确认")) b.pending = true;
+      if (rows.some((r) => r.status === "待确认")) {
+        b.pending = true;
+        /* 挂起待确认的学习载荷：面板横幅可直接"确认生效 / 拒绝" */
+        const p = rows.find((r) => r.status === "待确认");
+        b.pendingLearn = {
+          mode: "auto", tcOld: p.tcOld, dtOld: p.dtOld, tcNew: p.tcNew, dtNew: p.dtNew,
+          tsNew: Math.round((p.tcNew + p.dtNew) * 10) / 10,
+          rise: Math.round((p.tcNew - p.tcOld) * 10) / 10,
+          th: b.autoTh || 3, points: 200
+        };
+      }
     });
   })();
 
@@ -594,6 +610,9 @@
     return {
       dtBase: b.dtBase, tcBase: b.tcBase, source: b.source,
       learnedAt: b.learnedAt, nextAuto: b.nextAuto, sampleCnt: b.sampleCnt || 200,
+      mode: b.mode || "auto",
+      autoTh: b.autoTh || 3,
+      confirmNeeded: b.confirmNeeded !== false,
       cumRise, pending, templ, warnRise: 5,
       state: pending ? "待确认" : cumRise >= 5 ? "趋势预警" : templ ? "模板冷启动" : "已生效",
       annotCnt: (baselineAnnot[d.id] || []).length
@@ -701,9 +720,10 @@
   ];
 
   function baselineSummary() {
-    const s = { total: devices.length, ok: 0, pending: 0, warn: 0, templ: 0, pendingList: [], warnList: [], grade: {} };
+    const s = { total: devices.length, ok: 0, pending: 0, warn: 0, templ: 0, autoCnt: 0, manualCnt: 0, pendingList: [], warnList: [], grade: {} };
     devices.forEach((d) => {
       const i = baselineInfo(d);
+      if (i.mode === "manual") s.manualCnt++; else s.autoCnt++;
       if (i.pending) { s.pending++; s.pendingList.push({ d, i }); }
       if (i.cumRise >= i.warnRise) { s.warn++; s.warnList.push({ d, i }); }
       if (i.templ) s.templ++;

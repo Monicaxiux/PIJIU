@@ -13,11 +13,12 @@
     if (parts[0] === "monitor" && parts[1]) {
       route.path = "/monitor/detail"; route.params.id = parts[1];
     } else if (parts[0] === "ledger" && parts[1]) {
-      /* 深链：设备台账 → 指定设备档案 / 页签（供二维码扫码直达基线标注使用）
-         #/ledger/<设备ID或位号>/<base|sensor|baseline|life> */
+      /* 深链：设备台账 → 指定设备档案 / 页签（供巡检链接直达基线标注使用）
+         #/ledger/<设备ID或位号>/<base|sensor|baseline|life>[/hist] */
       route.path = "/ledger";
       route.params.deviceId = decodeURIComponent(parts[1]);
       route.params.tab = parts[2] || "";
+      route.params.extra = parts[3] || "";
     } else if (parts[0] === "diag" && parts[1] === "strategy" && parts[2]) {
       /* 深链：诊断策略 → 指定阀型页签（#/diag/strategy/<倒立桶|热力型|浮球式>） */
       route.path = "/diag/strategy";

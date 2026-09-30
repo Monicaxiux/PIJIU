@@ -73,10 +73,16 @@
       app.config.globalProperties.$store = window.Store;
       app.mount("#app");
 
-      /* 首屏加载态淡出（兜底：即使异常也在 1.2s 内隐藏，避免遮挡） */
+      /* 首屏加载态淡出（兜底：即使异常也在 1.2s 内隐藏，避免遮挡）
+         ?snap=1：无头截图 / 自动化验证旁路——立即移除加载态，不依赖 CSS 过渡 */
       const hide = () => { const s = document.getElementById("splash"); if (s) s.classList.add("hide"); };
-      requestAnimationFrame(() => setTimeout(hide, 260));
-      setTimeout(hide, 1200);
+      if (location.search.indexOf("snap") >= 0) {
+        const s = document.getElementById("splash");
+        if (s) s.style.display = "none";
+      } else {
+        requestAnimationFrame(() => setTimeout(hide, 260));
+        setTimeout(hide, 1200);
+      }
     })();
   </script>
 </body>

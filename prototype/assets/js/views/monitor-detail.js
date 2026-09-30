@@ -270,8 +270,13 @@
                 <tr><td class="dim">出口温度基准</td><td class="mono">{{ bi.tcBase }} ℃</td>
                     <td class="dim">温差基准</td><td class="mono">{{ bi.dtBase }} ℃</td></tr>
                 <tr><td class="dim">基线来源</td><td colspan="3">{{ bi.source }} · {{ bi.sampleCnt }} 点 · 学习于 {{ bi.learnedAt }}</td></tr>
-                <tr><td class="dim">下次自动重算</td><td class="mono">{{ bi.nextAuto }}</td>
-                    <td class="dim">累计上升</td>
+                <tr><td class="dim">学习模式</td>
+                    <td><span class="st-tag" style="padding:1px 8px" :style="bi.mode === 'manual'
+                         ? 'color:#ff9f27;border-color:rgba(255,159,39,0.4);background:rgba(255,159,39,0.08)'
+                         : 'color:#2ecc71;border-color:rgba(46,204,113,0.4);background:rgba(46,204,113,0.08)'">
+                      {{ bi.mode === "manual" ? "手动维护" : "自动学习" }}</span></td>
+                    <td class="dim">下次自动重算</td><td class="mono">{{ bi.nextAuto }}</td></tr>
+                <tr><td class="dim">累计上升</td>
                     <td class="mono" :style="{ color: bi.cumRise >= 5 ? '#ff4d5e' : bi.cumRise >= 3 ? '#ff9f27' : '#2ecc71' }">{{ bi.cumRise }} ℃</td></tr>
                 <tr><td class="dim">已标注区间</td><td class="mono">{{ bi.annotCnt }} 段</td>
                     <td class="dim">判据适用性</td>

@@ -332,6 +332,26 @@ body {
 /* 标注工具条 / 稳定窗口徽标 */
 .st-tag.stable { color: var(--c-normal); border-color: rgba(46, 204, 113, 0.4); background: rgba(46, 204, 113, 0.08); }
 .st-tag.unstable { color: var(--c-leak); border-color: rgba(255, 77, 94, 0.4); background: rgba(255, 77, 94, 0.08); }
+
+/* ---------- 设备监测列表：基线模式 / 人工确认 两列 ---------- */
+/* 色语义沿用基线面板：黄 = 需人工确认，灰 = 免确认 */
+.bm-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 5px; font-size: 11px; line-height: 17px;
+  border: 1px solid; white-space: nowrap;
+}
+.bm-tag.auto   { color: var(--cyan);   border-color: rgba(0, 212, 255, 0.4);   background: rgba(0, 212, 255, 0.08); }
+.bm-tag.manual { color: var(--c-stop); border-color: rgba(138, 151, 168, 0.4); background: rgba(138, 151, 168, 0.08); }
+.bm-th { font-family: Consolas, monospace; font-size: 10px; color: var(--text-dim); margin-left: 4px; }
+
+.cnf-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 5px; font-size: 11px; line-height: 17px;
+  border: 1px solid; white-space: nowrap;
+}
+.cnf-tag.pend { color: #ffd23f; border-color: rgba(255, 210, 63, 0.55); background: rgba(255, 210, 63, 0.14); box-shadow: 0 0 8px rgba(255, 210, 63, 0.25); }
+.cnf-tag.need { color: #ffd23f; border-color: rgba(255, 210, 63, 0.38); background: rgba(255, 210, 63, 0.08); }
+.cnf-tag.free { color: var(--c-stop); border-color: rgba(138, 151, 168, 0.4); background: rgba(138, 151, 168, 0.08); }
 .mark-tip {
   display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px;
   background: rgba(0, 212, 255, 0.07); border: 1px dashed rgba(0, 212, 255, 0.35);
@@ -422,3 +442,34 @@ body {
   .grid-3, .grid-2 { grid-template-columns: 1fr; }
 }
 
+
+/* ---------- 基线模式开关（自动 / 手动） ---------- */
+.blm-switch {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: none; padding: 0; cursor: pointer; user-select: none;
+}
+.blm-switch .blm-track {
+  width: 34px; height: 16px; border-radius: 8px; position: relative;
+  background: rgba(46, 204, 113, 0.35); border: 1px solid rgba(46, 204, 113, 0.6);
+  transition: background 0.15s, border-color 0.15s; flex: none;
+}
+.blm-switch .blm-knob {
+  position: absolute; top: 1px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: #2ecc71; transition: left 0.15s, background 0.15s;
+}
+.blm-switch .blm-text { font-size: 11px; color: #2ecc71; }
+.blm-switch.manual .blm-track { background: rgba(255, 159, 39, 0.3); border-color: rgba(255, 159, 39, 0.6); }
+.blm-switch.manual .blm-knob { left: 18px; background: #ff9f27; }
+.blm-switch.manual .blm-text { color: #ff9f27; }
+.blm-switch:hover .blm-track { box-shadow: 0 0 6px rgba(0, 212, 255, 0.35); }
+
+/* ---------- 超阈值处理策略按钮（自动模式）：黄 = 需人工确认 / 灰 = 自动生效 ---------- */
+.cfm-btn {
+  margin-left: 10px; padding: 2px 10px; border-radius: 11px; cursor: pointer;
+  font-size: 11px; font-family: inherit; line-height: 1.7; white-space: nowrap;
+  background: rgba(148, 163, 184, 0.12); border: 1px solid rgba(148, 163, 184, 0.45);
+  color: #94a3b8; transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.cfm-btn:hover { background: rgba(148, 163, 184, 0.22); color: #cbd5e1; }
+.cfm-btn.need { background: rgba(255, 159, 39, 0.12); border-color: rgba(255, 159, 39, 0.6); color: #ff9f27; }
+.cfm-btn.need:hover { background: rgba(255, 159, 39, 0.22); box-shadow: 0 0 6px rgba(255, 159, 39, 0.3); }
